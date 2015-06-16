@@ -737,7 +737,7 @@ function kube-up {
   ) > "${KUBE_TEMP}/master-start.sh"
 
   echo "Starting Master"
-  master_create_response=$($AWS_CMD run-instances \
+  master_id=$($AWS_CMD run-instances \
     --image-id $AWS_IMAGE \
     --iam-instance-profile Name=$IAM_PROFILE_MASTER \
     --instance-type $MASTER_SIZE \
@@ -747,18 +747,11 @@ function kube-up {
     --security-group-ids ${MASTER_SG_ID} \
     --associate-public-ip-address \
     --block-device-mappings "${master_block_device_mappings}" \
-    --user-data file://${KUBE_TEMP}/master-start.sh)
-  echo $master_create_response
-  master_id=$($master_create_response | json_val '["Instances"][0]["InstanceId"]')
-  # This assumes that the root device will be the first device listed in the response"
-  master_volume_id=$($master_create_response | json_val '["Instances"][0]["BlockDeviceMappings"][0]["Ebs"]["VolumeId"]')
+    --user-data file://${KUBE_TEMP}/master-start.sh | json_val '["Instances"][0]["InstanceId"]')
 
   add-tag $master_id Name $MASTER_NAME
   add-tag $master_id Role $MASTER_TAG
   add-tag $master_id KubernetesCluster ${CLUSTER_ID}
-
-  add-tag $master_volume_id Name ${MASTER_NAME}-pd
-  add-tag $master_volume_id KubernetesCluster ${CLUSTER_ID}
 
   echo "Waiting for master to be ready"
 
@@ -791,6 +784,16 @@ function kube-up {
     attempt=$(($attempt+1))
     sleep 10
   done
+
+  # Master is ready, find the id of the root ebs device
+  # This assumes that the root device will be the first device listed in the response"
+  master_volume_id=$($AWS_CMD describe-instance-attribute \
+    --instance-id $master_id \
+    --attribute blockDeviceMapping | \
+    json_val '["BlockDeviceMappings"][0]["Ebs"]["VolumeId"]')
+
+  add-tag $master_volume_id Name ${MASTER_NAME}-pd
+  add-tag $master_volume_id KubernetesCluster ${CLUSTER_ID}
 
   # Check for SSH connectivity
   attempt=0
